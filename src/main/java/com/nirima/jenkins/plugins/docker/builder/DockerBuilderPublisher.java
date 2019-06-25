@@ -47,6 +47,8 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.CheckForNull;
 import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Serializable;
@@ -105,6 +107,14 @@ public class DockerBuilderPublisher extends Builder implements Serializable, Sim
 
     public final String dockerFileDirectory;
 
+    public final String dockerContent;
+
+    public final String dockerType;
+
+    public static final String DOCKER_TYPE_FILE = "file";
+
+    public static final String DOCKER_TYPE_CONTENT = "content";
+
     private transient String pullCredentialsId;
     private DockerRegistryEndpoint fromRegistry;
 
@@ -129,6 +139,8 @@ public class DockerBuilderPublisher extends Builder implements Serializable, Sim
 
     @DataBoundConstructor
     public DockerBuilderPublisher(String dockerFileDirectory,
+                                    String dockerContent,
+                                    String dockerType,
                                   DockerRegistryEndpoint fromRegistry,
                                   String cloud,
                                   String tagsString,
@@ -137,6 +149,8 @@ public class DockerBuilderPublisher extends Builder implements Serializable, Sim
                                   boolean cleanImages,
                                   boolean cleanupWithJenkinsJobDelete) {
         this.dockerFileDirectory = dockerFileDirectory;
+        this.dockerContent = dockerContent;
+        this.dockerType = dockerType.equals(DOCKER_TYPE_FILE)?DOCKER_TYPE_FILE:DOCKER_TYPE_CONTENT;
         this.fromRegistry = fromRegistry;
         setTagsString(tagsString);
         this.tag = null;
@@ -242,6 +256,8 @@ public class DockerBuilderPublisher extends Builder implements Serializable, Sim
 
         final FilePath fpChild;
 
+        final File file;
+
         final List<String> tagsToUse;
 
         private final DockerAPI dockerApi;
@@ -256,7 +272,18 @@ public class DockerBuilderPublisher extends Builder implements Serializable, Sim
             this.fpChild = fpChild;
             this.tagsToUse = tagsToUse;
             this.dockerApi = dockerCloud.getDockerApi();
+            this.file = null;
+        }
 
+        private Run(hudson.model.Run<?, ?> run, final Launcher launcher, final TaskListener listener, File file, List<String> tagsToUse, DockerCloud dockerCloud) {
+
+            this.run = run;
+            this.launcher = launcher;
+            this.listener = listener;
+            this.file = file;
+            this.tagsToUse = tagsToUse;
+            this.dockerApi = dockerCloud.getDockerApi();
+            this.fpChild = null;
         }
 
         private DockerAPI getDockerAPI() {
@@ -329,8 +356,9 @@ public class DockerBuilderPublisher extends Builder implements Serializable, Sim
                 auths.addConfig(DockerCloud.getAuthConfig(pullRegistry, run.getParent().getParent()));
             }
 
-            log("Docker Build: building image at path " + fpChild.getRemote());
-            final InputStream tar = fpChild.act(new DockerBuildCallable());
+//            log("Docker Build: building image at path " + fpChild.getRemote());
+//            final InputStream tar = fpChild.act(new DockerBuildCallable());
+            log("Docker Build: building image at path " + file.getAbsolutePath());
 
 
             BuildImageResultCallback resultCallback = new BuildImageResultCallback() {
@@ -345,14 +373,14 @@ public class DockerBuilderPublisher extends Builder implements Serializable, Sim
             };
             final String imageId;
             try(final DockerClient client = getClientWithNoTimeout()) {
-                imageId = client.buildImageCmd(tar)
+                imageId = client.buildImageCmd(file)
                         .withBuildAuthConfigs(auths)
                         .exec(resultCallback)
                         .awaitImageId();
                 if (imageId == null) {
                     throw new AbortException("Built image id is null. Some error occured");
                 }
-    
+
                 // tag built image with tags
                 for (String tag : tagsToUse) {
                     final NameParser.ReposTag reposTag = NameParser.parseRepositoryTag(tag);
@@ -415,16 +443,48 @@ public class DockerBuilderPublisher extends Builder implements Serializable, Sim
     @Override
     public void perform(hudson.model.Run<?, ?> run, FilePath workspace, Launcher launcher, TaskListener listener) throws InterruptedException, IOException {
 
+        listener.getLogger().println("dockerType:"+dockerType);
+        listener.getLogger().println("dockerContent:"+dockerContent);
+
         List<String> expandedTags;
 
         expandedTags = expandTags(run, workspace, launcher, listener);
-        String expandedDockerFileDirectory = dockerFileDirectory;
+        String expandedDockerFileDirectory = dockerType.equals(DOCKER_TYPE_FILE)?dockerFileDirectory:"./Dockerfile";
+
         try {
-            expandedDockerFileDirectory = TokenMacro.expandAll(run, workspace, listener, this.dockerFileDirectory);
+            expandedDockerFileDirectory = TokenMacro.expandAll(run, workspace, listener, expandedDockerFileDirectory);
         } catch (MacroEvaluationException e) {
-            listener.getLogger().println("Couldn't macro expand docker file directory " + dockerFileDirectory);
+            listener.getLogger().println("Couldn't macro expand docker file directory " + expandedDockerFileDirectory);
         }
-        new Run(run, launcher, listener, new FilePath(workspace, expandedDockerFileDirectory), expandedTags, getCloud(launcher)).run();
+
+        if(dockerType.equals(DOCKER_TYPE_CONTENT)){
+            FileWriter writer;
+            try {
+                writer = new FileWriter(workspace.getRemote()+"/Dockerfile");
+                writer.write("");
+                writer.write(dockerContent);
+                writer.flush();
+                writer.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+
+        listener.getLogger().println("workspace remote:"+workspace.getRemote());
+        listener.getLogger().println("workspace name:"+workspace.getName());
+        listener.getLogger().println("expandedDockerFileDirectory:"+expandedDockerFileDirectory);
+
+        FilePath filePath = new FilePath(workspace, expandedDockerFileDirectory);
+        listener.getLogger().println("filePath remote:"+filePath.getRemote());
+        File file = new File(filePath.getRemote());
+
+        if(!file.exists()){
+            String msg = String.format("Dockerfile does't exist:%s",expandedDockerFileDirectory);
+            listener.getLogger().println(msg);
+            throw new FileNotFoundException(msg);
+        }
+
+        new Run(run, launcher, listener, file, expandedTags, getCloud(launcher)).run();
 
     }
 

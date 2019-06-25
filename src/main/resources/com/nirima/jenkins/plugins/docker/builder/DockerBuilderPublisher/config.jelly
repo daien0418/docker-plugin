@@ -1,10 +1,25 @@
 <?jelly escape-by-default='true'?>
 <j:jelly xmlns:j="jelly:core" xmlns:st="jelly:stapler" xmlns:d="jelly:define" xmlns:l="/lib/layout" xmlns:t="/lib/hudson" xmlns:f="/lib/form" xmlns:c="/lib/credentials">
 
-    <f:entry title="Directory for Dockerfile" field="dockerFileDirectory"
-             description="Location to look for the Dockerfile in, which is used to build the image.">
-        <f:textbox />
-    </f:entry>
+	<f:entry title="">
+		<f:radio name="DockerBuilderPublisher.dockerType" checked="${instance.dockerType==null || instance.dockerType=='file'}"
+		title="${%Dockerfile path}" value="file"/>
+	</f:entry>
+
+	<f:entry title="">
+		<f:radio name="DockerBuilderPublisher.dockerType" checked="${instance.dockerType=='content'}"
+		title="${%Dockerfile content}" value="content"/>
+	</f:entry>
+
+    	<f:entry title="Directory for Dockerfile" field="dockerFileDirectory"
+             	description="Location to look for the Dockerfile in, which is used to build the image.">
+        	<f:textbox />
+    	</f:entry>
+
+		<f:entry title="Dockerfile Content" field="dockerContent"
+			description="Dockerfile Content used to build">
+			<f:textarea />
+		</f:entry>
 
     <f:advanced>
         <f:block>
@@ -26,7 +41,7 @@
     <f:entry title="${%Push image}" field="pushOnSuccess">
         <f:checkbox/>
     </f:entry>
-    
+
     <f:entry title="${%Registry Credentials}" field="pushCredentialsId">
         <c:select/>
     </f:entry>
